@@ -256,6 +256,16 @@ def cross_compile_msl(shader, spirv, opt, iterations, paths):
         msl_args.append('1')
     if '.force-native-array.' in shader:
         msl_args.append('--msl-force-native-arrays')
+    if '.zero-initialize.' in shader:
+        msl_args.append('--force-zero-initialized-variables')
+    if '.frag-output.' in shader:
+        # Arbitrary for testing purposes.
+        msl_args.append('--msl-disable-frag-depth-builtin')
+        msl_args.append('--msl-disable-frag-stencil-ref-builtin')
+        msl_args.append('--msl-enable-frag-output-mask')
+        msl_args.append('0x000000ca')
+    if '.no-user-varying.' in shader:
+        msl_args.append('--msl-no-clip-distance-user-varying')
 
     subprocess.check_call(msl_args)
 
@@ -360,6 +370,11 @@ def cross_compile_hlsl(shader, spirv, opt, force_no_external_validation, iterati
         hlsl_args.append('--emit-line-directives')
     if '.force-uav.' in shader:
         hlsl_args.append('--hlsl-force-storage-buffer-as-uav')
+    if '.zero-initialize.' in shader:
+        hlsl_args.append('--force-zero-initialized-variables')
+    if '.nonwritable-uav-texture.' in shader:
+        hlsl_args.append('--hlsl-nonwritable-uav-texture-as-srv')
+
     subprocess.check_call(hlsl_args)
 
     if not shader_is_invalid_spirv(hlsl_path):
@@ -440,13 +455,21 @@ def cross_compile(shader, vulkan, spirv, invalid_spirv, eliminate, is_legacy, fl
         extra_args += ['--vulkan-glsl-disable-ext-samplerless-texture-functions']
     if '.no-qualifier-deduction.' in shader:
         extra_args += ['--disable-storage-image-qualifier-deduction']
+    if '.framebuffer-fetch.' in shader:
+        extra_args += ['--glsl-remap-ext-framebuffer-fetch', '0', '0']
+        extra_args += ['--glsl-remap-ext-framebuffer-fetch', '1', '1']
+        extra_args += ['--glsl-remap-ext-framebuffer-fetch', '2', '2']
+        extra_args += ['--glsl-remap-ext-framebuffer-fetch', '3', '3']
+    if '.zero-initialize.' in shader:
+        extra_args += ['--force-zero-initialized-variables']
 
     spirv_cross_path = paths.spirv_cross
 
     # A shader might not be possible to make valid GLSL from, skip validation for this case.
-    if not ('nocompat' in glsl_path):
+    if (not ('nocompat' in glsl_path)) or (not vulkan):
         subprocess.check_call([spirv_cross_path, '--entry', 'main', '--output', glsl_path, spirv_path] + extra_args)
-        validate_shader(glsl_path, False, paths)
+        if not 'nocompat' in glsl_path:
+            validate_shader(glsl_path, False, paths)
     else:
         remove_file(glsl_path)
         glsl_path = None
@@ -698,20 +721,21 @@ def test_shaders_helper(stats, backend, args):
     # The child processes in parallel execution mode don't have the proper state for the global args variable, so
     # at this point we need to switch to explicit arguments
     if args.parallel:
-        pool = multiprocessing.Pool(multiprocessing.cpu_count())
+        with multiprocessing.Pool(multiprocessing.cpu_count()) as pool:
+            results = []
+            for f in all_files:
+                results.append(pool.apply_async(test_shader_file,
+                    args = (f, stats, args, backend)))
 
-        results = []
-        for f in all_files:
-            results.append(pool.apply_async(test_shader_file,
-                args = (f, stats, args, backend)))
+            pool.close()
+            pool.join()
+            results_completed = [res.get() for res in results]
 
-        for res in results:
-            error = res.get()
-            if error is not None:
-                pool.close()
-                pool.join()
-                print('Error:', error)
-                sys.exit(1)
+            for error in results_completed:
+                if error is not None:
+                    print('Error:', error)
+                    sys.exit(1)
+
     else:
         for i in all_files:
             e = test_shader_file(i, stats, args, backend)
