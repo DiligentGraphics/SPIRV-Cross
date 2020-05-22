@@ -3087,11 +3087,11 @@ bool CompilerMSL::validate_member_packing_rules_msl(const SPIRType &type, uint32
 	{
 		// If we have an array type, array stride must match exactly with SPIR-V.
 
-		// An exception to this requirement is if we have one array element and a packed decoration.
+		// An exception to this requirement is if we have one array element.
 		// This comes from DX scalar layout workaround.
 		// If app tries to be cheeky and access the member out of bounds, this will not work, but this is the best we can do.
-		bool relax_array_stride = has_extended_member_decoration(type.self, index, SPIRVCrossDecorationPhysicalTypePacked) &&
-		                          mbr_type.array.back() == 1 && mbr_type.array_size_literal.back();
+		// In OpAccessChain with logical memory models, access chains must be in-bounds in SPIR-V specification.
+		bool relax_array_stride = mbr_type.array.back() == 1 && mbr_type.array_size_literal.back();
 
 		if (!relax_array_stride)
 		{
@@ -3137,7 +3137,9 @@ void CompilerMSL::ensure_member_packing_rules_msl(SPIRType &ib_type, uint32_t in
 		SPIRV_CROSS_THROW("Cannot perform any repacking for structs when it is used as a member of another struct.");
 
 	// Perform remapping here.
-	set_extended_member_decoration(ib_type.self, index, SPIRVCrossDecorationPhysicalTypePacked);
+	// There is nothing to be gained by using packed scalars, so don't attempt it.
+	if (!is_scalar(ib_type))
+		set_extended_member_decoration(ib_type.self, index, SPIRVCrossDecorationPhysicalTypePacked);
 
 	// Try validating again, now with packed.
 	if (validate_member_packing_rules_msl(ib_type, index))
@@ -8666,7 +8668,7 @@ string CompilerMSL::to_struct_member(const SPIRType &type, uint32_t member_type_
 			td_line += ";";
 			add_typedef_line(td_line);
 		}
-		else
+		else if (!is_scalar(physical_type)) // scalar type is already packed.
 			pack_pfx = "packed_";
 	}
 	else if (row_major)
@@ -10657,6 +10659,9 @@ void CompilerMSL::replace_illegal_names()
 
 string CompilerMSL::to_member_reference(uint32_t base, const SPIRType &type, uint32_t index, bool ptr_chain)
 {
+	if (index < uint32_t(type.member_type_index_redirection.size()))
+		index = type.member_type_index_redirection[index];
+
 	auto *var = maybe_get<SPIRVariable>(base);
 	// If this is a buffer array, we have to dereference the buffer pointers.
 	// Otherwise, if this is a pointer expression, dereference it.
@@ -12457,8 +12462,27 @@ void CompilerMSL::MemberSorter::sort()
 	// the members should be reordered, based on builtin and sorting aspect meta info.
 	size_t mbr_cnt = type.member_types.size();
 	SmallVector<uint32_t> mbr_idxs(mbr_cnt);
-	iota(mbr_idxs.begin(), mbr_idxs.end(), 0); // Fill with consecutive indices
+	std::iota(mbr_idxs.begin(), mbr_idxs.end(), 0); // Fill with consecutive indices
 	std::stable_sort(mbr_idxs.begin(), mbr_idxs.end(), *this); // Sort member indices based on sorting aspect
+
+	bool sort_is_identity = true;
+	for (uint32_t mbr_idx = 0; mbr_idx < mbr_cnt; mbr_idx++)
+	{
+		if (mbr_idx != mbr_idxs[mbr_idx])
+		{
+			sort_is_identity = false;
+			break;
+		}
+	}
+
+	if (sort_is_identity)
+		return;
+
+	if (meta.members.size() < type.member_types.size())
+	{
+		// This should never trigger in normal circumstances, but to be safe.
+		meta.members.resize(type.member_types.size());
+	}
 
 	// Move type and meta member info to the order defined by the sorted member indices.
 	// This is done by creating temporary copies of both member types and meta, and then
@@ -12469,6 +12493,13 @@ void CompilerMSL::MemberSorter::sort()
 	{
 		type.member_types[mbr_idx] = mbr_types_cpy[mbr_idxs[mbr_idx]];
 		meta.members[mbr_idx] = mbr_meta_cpy[mbr_idxs[mbr_idx]];
+	}
+
+	if (sort_aspect == SortAspect::Offset)
+	{
+		// If we're sorting by Offset, this might affect user code which accesses a buffer block.
+		// We will need to redirect member indices from one index to sorted index.
+		type.member_type_index_redirection = std::move(mbr_idxs);
 	}
 }
 
