@@ -699,8 +699,31 @@ bool Compiler::InterfaceVariableAccessHandler::handle(Op opcode, const uint32_t 
 	{
 		if (length < 5)
 			return false;
-		uint32_t extension_set = args[2];
-		if (compiler.get<SPIRExtension>(extension_set).ext == SPIRExtension::SPV_AMD_shader_explicit_vertex_parameter)
+		auto &extension_set = compiler.get<SPIRExtension>(args[2]);
+		switch (extension_set.ext)
+		{
+		case SPIRExtension::GLSL:
+		{
+			auto op = static_cast<GLSLstd450>(args[3]);
+
+			switch (op)
+			{
+			case GLSLstd450InterpolateAtCentroid:
+			case GLSLstd450InterpolateAtSample:
+			case GLSLstd450InterpolateAtOffset:
+			{
+				auto *var = compiler.maybe_get<SPIRVariable>(args[4]);
+				if (var && storage_class_is_interface(var->storage))
+					variables.insert(args[4]);
+				break;
+			}
+
+			default:
+				break;
+			}
+			break;
+		}
+		case SPIRExtension::SPV_AMD_shader_explicit_vertex_parameter:
 		{
 			enum AMDShaderExplicitVertexParameter
 			{
@@ -722,6 +745,10 @@ bool Compiler::InterfaceVariableAccessHandler::handle(Op opcode, const uint32_t 
 			default:
 				break;
 			}
+			break;
+		}
+		default:
+			break;
 		}
 		break;
 	}
@@ -1655,8 +1682,13 @@ size_t Compiler::get_declared_struct_size_runtime_array(const SPIRType &type, si
 uint32_t Compiler::evaluate_spec_constant_u32(const SPIRConstantOp &spec) const
 {
 	auto &result_type = get<SPIRType>(spec.basetype);
-	if (result_type.basetype != SPIRType::UInt && result_type.basetype != SPIRType::Int && result_type.basetype != SPIRType::Boolean)
-		SPIRV_CROSS_THROW("Only 32-bit integers and booleans are currently supported when evaluating specialization constants.\n");
+	if (result_type.basetype != SPIRType::UInt && result_type.basetype != SPIRType::Int &&
+	    result_type.basetype != SPIRType::Boolean)
+	{
+		SPIRV_CROSS_THROW(
+		    "Only 32-bit integers and booleans are currently supported when evaluating specialization constants.\n");
+	}
+
 	if (!is_scalar(result_type))
 		SPIRV_CROSS_THROW("Spec constant evaluation must be a scalar.\n");
 
@@ -1665,7 +1697,11 @@ uint32_t Compiler::evaluate_spec_constant_u32(const SPIRConstantOp &spec) const
 	const auto eval_u32 = [&](uint32_t id) -> uint32_t {
 		auto &type = expression_type(id);
 		if (type.basetype != SPIRType::UInt && type.basetype != SPIRType::Int && type.basetype != SPIRType::Boolean)
-			SPIRV_CROSS_THROW("Only 32-bit integers and booleans are currently supported when evaluating specialization constants.\n");
+		{
+			SPIRV_CROSS_THROW("Only 32-bit integers and booleans are currently supported when evaluating "
+			                  "specialization constants.\n");
+		}
+
 		if (!is_scalar(type))
 			SPIRV_CROSS_THROW("Spec constant evaluation must be a scalar.\n");
 		if (const auto *c = this->maybe_get<SPIRConstant>(id))
@@ -1674,37 +1710,41 @@ uint32_t Compiler::evaluate_spec_constant_u32(const SPIRConstantOp &spec) const
 			return evaluate_spec_constant_u32(this->get<SPIRConstantOp>(id));
 	};
 
-#define binary_spec_op(op, binary_op) \
-	case Op##op: value = eval_u32(spec.arguments[0]) binary_op eval_u32(spec.arguments[1]); break
-#define binary_spec_op_cast(op, binary_op, type) \
-	case Op##op: value = uint32_t(type(eval_u32(spec.arguments[0])) binary_op type(eval_u32(spec.arguments[1]))); break
+#define binary_spec_op(op, binary_op)                                              \
+	case Op##op:                                                                   \
+		value = eval_u32(spec.arguments[0]) binary_op eval_u32(spec.arguments[1]); \
+		break
+#define binary_spec_op_cast(op, binary_op, type)                                                         \
+	case Op##op:                                                                                         \
+		value = uint32_t(type(eval_u32(spec.arguments[0])) binary_op type(eval_u32(spec.arguments[1]))); \
+		break
 
 	// Support the basic opcodes which are typically used when computing array sizes.
 	switch (spec.opcode)
 	{
-	binary_spec_op(IAdd, +);
-	binary_spec_op(ISub, -);
-	binary_spec_op(IMul, *);
-	binary_spec_op(BitwiseAnd, &);
-	binary_spec_op(BitwiseOr, |);
-	binary_spec_op(BitwiseXor, ^);
-	binary_spec_op(LogicalAnd, &);
-	binary_spec_op(LogicalOr, |);
-	binary_spec_op(ShiftLeftLogical, <<);
-	binary_spec_op(ShiftRightLogical, >>);
-	binary_spec_op_cast(ShiftRightArithmetic, >>, int32_t);
-	binary_spec_op(LogicalEqual, ==);
-	binary_spec_op(LogicalNotEqual, !=);
-	binary_spec_op(IEqual, ==);
-	binary_spec_op(INotEqual, !=);
-	binary_spec_op(ULessThan, <);
-	binary_spec_op(ULessThanEqual, <=);
-	binary_spec_op(UGreaterThan, >);
-	binary_spec_op(UGreaterThanEqual, >=);
-	binary_spec_op_cast(SLessThan, <, int32_t);
-	binary_spec_op_cast(SLessThanEqual, <=, int32_t);
-	binary_spec_op_cast(SGreaterThan, >, int32_t);
-	binary_spec_op_cast(SGreaterThanEqual, >=, int32_t);
+		binary_spec_op(IAdd, +);
+		binary_spec_op(ISub, -);
+		binary_spec_op(IMul, *);
+		binary_spec_op(BitwiseAnd, &);
+		binary_spec_op(BitwiseOr, |);
+		binary_spec_op(BitwiseXor, ^);
+		binary_spec_op(LogicalAnd, &);
+		binary_spec_op(LogicalOr, |);
+		binary_spec_op(ShiftLeftLogical, <<);
+		binary_spec_op(ShiftRightLogical, >>);
+		binary_spec_op_cast(ShiftRightArithmetic, >>, int32_t);
+		binary_spec_op(LogicalEqual, ==);
+		binary_spec_op(LogicalNotEqual, !=);
+		binary_spec_op(IEqual, ==);
+		binary_spec_op(INotEqual, !=);
+		binary_spec_op(ULessThan, <);
+		binary_spec_op(ULessThanEqual, <=);
+		binary_spec_op(UGreaterThan, >);
+		binary_spec_op(UGreaterThanEqual, >=);
+		binary_spec_op_cast(SLessThan, <, int32_t);
+		binary_spec_op_cast(SLessThanEqual, <=, int32_t);
+		binary_spec_op_cast(SGreaterThan, >, int32_t);
+		binary_spec_op_cast(SGreaterThanEqual, >=, int32_t);
 #undef binary_spec_op
 #undef binary_spec_op_cast
 

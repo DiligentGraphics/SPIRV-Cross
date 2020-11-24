@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-cmake_minimum_required(VERSION 2.8)
+cmake_minimum_required(VERSION 3.0)
 set(CMAKE_CXX_STANDARD 11)
 
 # Avoid a warning if parent project sets VERSION in project().
@@ -323,7 +323,7 @@ if (SPIRV_CROSS_STATIC)
 endif()
 
 set(spirv-cross-abi-major 0)
-set(spirv-cross-abi-minor 41)
+set(spirv-cross-abi-minor 43)
 set(spirv-cross-abi-patch 0)
 
 if (SPIRV_CROSS_SHARED)
