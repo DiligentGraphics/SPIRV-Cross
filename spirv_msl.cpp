@@ -14,6 +14,13 @@
  * limitations under the License.
  */
 
+/*
+ * At your option, you may choose to accept this material under either:
+ *  1. The Apache License, Version 2.0, found at <http://www.apache.org/licenses/LICENSE-2.0>, or
+ *  2. The MIT License, found at <http://opensource.org/licenses/MIT>.
+ * SPDX-License-Identifier: Apache-2.0 OR MIT.
+ */
+
 #include "spirv_msl.hpp"
 #include "GLSL.std.450.h"
 
@@ -1354,7 +1361,12 @@ void CompilerMSL::preprocess_op_codes()
 		needs_subgroup_invocation_id = true;
 	if (preproc.needs_subgroup_size)
 		needs_subgroup_size = true;
-	if (preproc.needs_sample_id)
+	// build_implicit_builtins() hasn't run yet, and in fact, this needs to execute
+	// before then so that gl_SampleID will get added; so we also need to check if
+	// that function would add gl_FragCoord.
+	if (preproc.needs_sample_id || msl_options.force_sample_rate_shading ||
+	    (is_sample_rate() && (active_input_builtins.get(BuiltInFragCoord) ||
+	                          (need_subpass_input && !msl_options.use_framebuffer_fetch_subpasses))))
 		needs_sample_id = true;
 }
 
@@ -10495,6 +10507,16 @@ bool CompilerMSL::is_direct_input_builtin(BuiltIn bi_type)
 	}
 }
 
+// Returns true if this is a fragment shader that runs per sample, and false otherwise.
+bool CompilerMSL::is_sample_rate() const
+{
+	auto &caps = get_declared_capabilities();
+	return get_execution_model() == ExecutionModelFragment &&
+	       (msl_options.force_sample_rate_shading ||
+	        std::find(caps.begin(), caps.end(), CapabilitySampleRateShading) != caps.end() ||
+	        (msl_options.use_framebuffer_fetch_subpasses && need_subpass_input));
+}
+
 void CompilerMSL::entry_point_args_builtin(string &ep_args)
 {
 	// Builtin variables
@@ -11037,7 +11059,7 @@ void CompilerMSL::fix_up_shader_inputs_outputs()
 		uint32_t var_id = var.self;
 		BuiltIn bi_type = ir.meta[var_id].decoration.builtin_type;
 
-		if (var.storage == StorageClassInput && is_builtin_variable(var))
+		if (var.storage == StorageClassInput && is_builtin_variable(var) && active_input_builtins.get(bi_type))
 		{
 			switch (bi_type)
 			{
@@ -11046,6 +11068,15 @@ void CompilerMSL::fix_up_shader_inputs_outputs()
 					statement(builtin_type_decl(bi_type), " ", to_expression(var_id), " = get_sample_position(",
 					          to_expression(builtin_sample_id_id), ");");
 				});
+				break;
+			case BuiltInFragCoord:
+				if (is_sample_rate())
+				{
+					entry_func.fixup_hooks_in.push_back([=]() {
+						statement(to_expression(var_id), ".xy += get_sample_position(",
+						          to_expression(builtin_sample_id_id), ") - 0.5;");
+					});
+				}
 				break;
 			case BuiltInHelperInvocation:
 				if (msl_options.is_ios() && !msl_options.supports_msl_version(2, 3))
@@ -11200,7 +11231,7 @@ void CompilerMSL::fix_up_shader_inputs_outputs()
 						          to_expression(builtin_subgroup_invocation_id_id), " - 32, 0), ",
 						          msl_options.fixed_subgroup_size, " - max(",
 						          to_expression(builtin_subgroup_invocation_id_id),
-						          ", 32u)), uint2(0)) & spvSubgroupBallot(true);");
+						          ", 32u)), uint2(0));");
 					}
 					else if (msl_options.fixed_subgroup_size != 0)
 					{
@@ -11209,7 +11240,7 @@ void CompilerMSL::fix_up_shader_inputs_outputs()
 						          to_expression(builtin_subgroup_invocation_id_id), ", ",
 						          msl_options.fixed_subgroup_size, " - ",
 						          to_expression(builtin_subgroup_invocation_id_id),
-						          "), uint3(0)) & spvSubgroupBallot(true);");
+						          "), uint3(0));");
 					}
 					else if (msl_options.is_ios())
 					{
@@ -11253,8 +11284,7 @@ void CompilerMSL::fix_up_shader_inputs_outputs()
 						          to_expression(builtin_subgroup_invocation_id_id), " + 1 - 32, 0), ",
 						          msl_options.fixed_subgroup_size, " - max(",
 						          to_expression(builtin_subgroup_invocation_id_id),
-						          " + 1, 32u)), uint2(0)) & "
-						          "spvSubgroupBallot(true);");
+						          " + 1, 32u)), uint2(0));");
 					}
 					else if (msl_options.fixed_subgroup_size != 0)
 					{
@@ -11263,7 +11293,7 @@ void CompilerMSL::fix_up_shader_inputs_outputs()
 						          to_expression(builtin_subgroup_invocation_id_id), " + 1, ",
 						          msl_options.fixed_subgroup_size, " - ",
 						          to_expression(builtin_subgroup_invocation_id_id),
-						          " - 1), uint3(0)) & spvSubgroupBallot(true);");
+						          " - 1), uint3(0));");
 					}
 					else if (msl_options.is_ios())
 					{
@@ -11495,7 +11525,7 @@ void CompilerMSL::fix_up_shader_inputs_outputs()
 				break;
 			}
 		}
-		else if (var.storage == StorageClassOutput && is_builtin_variable(var))
+		else if (var.storage == StorageClassOutput && is_builtin_variable(var) && active_output_builtins.get(bi_type))
 		{
 			if (bi_type == BuiltInSampleMask && get_execution_model() == ExecutionModelFragment &&
 			    msl_options.additional_fixed_sample_mask != 0xffffffff)
@@ -11996,6 +12026,8 @@ void CompilerMSL::replace_illegal_names()
 		"main",
 		"saturate",
 		"assert",
+		"fmin3",
+		"fmax3",
 		"VARIABLE_TRACEPOINT",
 		"STATIC_DATA_TRACEPOINT",
 		"STATIC_DATA_TRACEPOINT_V",
@@ -13296,12 +13328,17 @@ string CompilerMSL::builtin_qualifier(BuiltIn builtin)
 				SPIRV_CROSS_THROW("thread_index_in_simdgroup requires Metal 2.2 in fragment shaders.");
 			return "thread_index_in_simdgroup";
 		}
-		else
+		else if (execution.model == ExecutionModelKernel || execution.model == ExecutionModelGLCompute ||
+		         execution.model == ExecutionModelTessellationControl ||
+		         (execution.model == ExecutionModelVertex && msl_options.vertex_for_tessellation))
 		{
+			// We are generating a Metal kernel function.
 			if (!msl_options.supports_msl_version(2))
-				SPIRV_CROSS_THROW("Subgroup builtins require Metal 2.0.");
+				SPIRV_CROSS_THROW("Subgroup builtins in kernel functions require Metal 2.0.");
 			return msl_options.is_ios() ? "thread_index_in_quadgroup" : "thread_index_in_simdgroup";
 		}
+		else
+			SPIRV_CROSS_THROW("Subgroup builtins are not available in this type of function.");
 
 	case BuiltInSubgroupEqMask:
 	case BuiltInSubgroupGeMask:

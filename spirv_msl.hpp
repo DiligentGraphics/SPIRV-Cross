@@ -14,6 +14,13 @@
  * limitations under the License.
  */
 
+/*
+ * At your option, you may choose to accept this material under either:
+ *  1. The Apache License, Version 2.0, found at <http://www.apache.org/licenses/LICENSE-2.0>, or
+ *  2. The MIT License, found at <http://opensource.org/licenses/MIT>.
+ * SPDX-License-Identifier: Apache-2.0 OR MIT.
+ */
+
 #ifndef SPIRV_CROSS_MSL_HPP
 #define SPIRV_CROSS_MSL_HPP
 
@@ -400,6 +407,11 @@ public:
 		// handling for the gl_VertexIndex builtin. We may as well, then, create three
 		// different shaders for these three scenarios.
 		IndexType vertex_index_type = IndexType::None;
+
+		// If set, a dummy [[sample_id]] input is added to a fragment shader if none is present.
+		// This will force the shader to run at sample rate, assuming Metal does not optimize
+		// the extra threads away.
+		bool force_sample_rate_shading = false;
 
 		bool is_ios() const
 		{
@@ -798,6 +810,7 @@ protected:
 	std::string to_sampler_expression(uint32_t id);
 	std::string to_swizzle_expression(uint32_t id);
 	std::string to_buffer_size_expression(uint32_t id);
+	bool is_sample_rate() const;
 	bool is_direct_input_builtin(spv::BuiltIn builtin);
 	std::string builtin_qualifier(spv::BuiltIn builtin);
 	std::string builtin_type_decl(spv::BuiltIn builtin, uint32_t id = 0);

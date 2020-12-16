@@ -14,6 +14,13 @@
  * limitations under the License.
  */
 
+/*
+ * At your option, you may choose to accept this material under either:
+ *  1. The Apache License, Version 2.0, found at <http://www.apache.org/licenses/LICENSE-2.0>, or
+ *  2. The MIT License, found at <http://opensource.org/licenses/MIT>.
+ * SPDX-License-Identifier: Apache-2.0 OR MIT.
+ */
+
 #include "spirv_cpp.hpp"
 #include "spirv_cross_util.hpp"
 #include "spirv_glsl.hpp"
@@ -569,6 +576,7 @@ struct CLIArguments
 	bool msl_ios_use_simdgroup_functions = false;
 	bool msl_emulate_subgroups = false;
 	uint32_t msl_fixed_subgroup_size = 0;
+	bool msl_force_sample_rate_shading = false;
 	bool glsl_emit_push_constant_as_ubo = false;
 	bool glsl_emit_ubo_as_plain_uniforms = false;
 	bool glsl_force_flattened_io_blocks = false;
@@ -789,7 +797,9 @@ static void print_help_msl()
 	                "\t\tIntended for Vulkan Portability implementations where Metal support for SIMD-groups is insufficient for true subgroups.\n"
 	                "\t[--msl-fixed-subgroup-size <size>]:\n\t\tAssign a constant <size> to the SubgroupSize builtin.\n"
 	                "\t\tIntended for Vulkan Portability implementations where VK_EXT_subgroup_size_control is not supported or disabled.\n"
-	                "\t\tIf 0, assume variable subgroup size as actually exposed by Metal.\n");
+	                "\t\tIf 0, assume variable subgroup size as actually exposed by Metal.\n"
+	                "\t[--msl-force-sample-rate-shading]:\n\t\tForce fragment shaders to run per sample.\n"
+	                "\t\tThis adds a [[sample_id]] parameter if none is already present.\n");
 	// clang-format on
 }
 
@@ -1034,6 +1044,7 @@ static string compile_iteration(const CLIArguments &args, std::vector<uint32_t> 
 		msl_opts.ios_use_simdgroup_functions = args.msl_ios_use_simdgroup_functions;
 		msl_opts.emulate_subgroups = args.msl_emulate_subgroups;
 		msl_opts.fixed_subgroup_size = args.msl_fixed_subgroup_size;
+		msl_opts.force_sample_rate_shading = args.msl_force_sample_rate_shading;
 		msl_comp->set_msl_options(msl_opts);
 		for (auto &v : args.msl_discrete_descriptor_sets)
 			msl_comp->add_discrete_descriptor_set(v);
@@ -1466,6 +1477,7 @@ static int main_inner(int argc, char *argv[])
 	cbs.add("--msl-emulate-subgroups", [&args](CLIParser &) { args.msl_emulate_subgroups = true; });
 	cbs.add("--msl-fixed-subgroup-size",
 	        [&args](CLIParser &parser) { args.msl_fixed_subgroup_size = parser.next_uint(); });
+	cbs.add("--msl-force-sample-rate-shading", [&args](CLIParser &) { args.msl_force_sample_rate_shading = true; });
 	cbs.add("--extension", [&args](CLIParser &parser) { args.extensions.push_back(parser.next_string()); });
 	cbs.add("--rename-entry-point", [&args](CLIParser &parser) {
 		auto old_name = parser.next_string();

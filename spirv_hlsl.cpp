@@ -12,6 +12,14 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
+ */
+
+/*
+ * At your option, you may choose to accept this material under either:
+ *  1. The Apache License, Version 2.0, found at <http://www.apache.org/licenses/LICENSE-2.0>, or
+ *  2. The MIT License, found at <http://opensource.org/licenses/MIT>.
+ * SPDX-License-Identifier: Apache-2.0 OR MIT.
  */
 
 #include "spirv_hlsl.hpp"
@@ -5608,6 +5616,12 @@ void CompilerHLSL::validate_shader_model()
 			if (hlsl_options.shader_model < 51)
 				SPIRV_CROSS_THROW(
 				    "Shader model 5.1 or higher is required to use bindless resources or NonUniformResourceIndex.");
+			break;
+
+		case CapabilityVariablePointers:
+		case CapabilityVariablePointersStorageBuffer:
+			SPIRV_CROSS_THROW("VariablePointers capability is not supported in HLSL.");
+
 		default:
 			break;
 		}
