@@ -4098,11 +4098,20 @@ inline const char* NamedMaximumNumberOfRegistersToString(NamedMaximumNumberOfReg
     }
 }
 
+#ifdef _MSC_VER
+#    pragma warning(push)
+#    pragma warning(disable : 4065) //  warning C4065: switch statement contains 'default' but no 'case' labels
+#endif
+
 inline const char* FPEncodingToString(FPEncoding value) {
     switch (value) {
     default: return "Unknown";
     }
 }
+
+#ifdef _MSC_VER
+#    pragma warning(pop)
+#endif
 
 inline const char* OpToString(Op value) {
     switch (value) {
