@@ -14202,6 +14202,8 @@ string CompilerMSL::get_type_address_space(const SPIRType &type, uint32_t id, bo
 
 	if (decoration_flags_signal_coherent(flags) && strcmp(addr_space, "device") == 0)
 		return join("coherent device");
+	else if (flags.get(DecorationNonWritable) && addr_space && strcmp(addr_space, "device") == 0)
+		return "const device";
 	else if (decoration_flags_signal_volatile(flags) && strcmp(addr_space, "thread") != 0)
 		return join("volatile ", addr_space);
 	else
